@@ -36,6 +36,7 @@ class Sidekiq::WorkerKiller
     @shutdown_wait   = options.fetch(:shutdown_wait, 30)
     @kill_signal     = options.fetch(:kill_signal, "SIGKILL")
     @gc              = options.fetch(:gc, true)
+    @log_details     = options.fetch(:log_details, false)
     @skip_shutdown   = options.fetch(:skip_shutdown_if, proc { false })
   end
 
@@ -49,8 +50,9 @@ class Sidekiq::WorkerKiller
   # @yield the next middleware in the chain or the enqueuing of the job
   def call(worker, job, queue)
     yield
-    # Skip if the max RSS is not exceeded
     return unless @max_rss > 0
+    info "current RSS #{current_rss} on #{identity}" if @log_details
+    # Skip if the max RSS is not exceeded
     return unless current_rss > @max_rss
     GC.start(full_mark: true, immediate_sweep: true) if @gc
     return unless current_rss > @max_rss
@@ -62,6 +64,7 @@ class Sidekiq::WorkerKiller
 
     warn "current RSS #{current_rss} of #{identity} exceeds " \
          "maximum RSS #{@max_rss}"
+    warn "requesting shutdown for job #{job} on #{worker} queue #{queue}" if @log_details
     request_shutdown
   end
 
@@ -123,6 +126,10 @@ class Sidekiq::WorkerKiller
     Sidekiq::ProcessSet.new.find do |process|
       process["identity"] == identity
     end || raise("No sidekiq worker with identity #{identity} found")
+  end
+
+  def info(msg)
+    Sidekiq.logger.info(msg)
   end
 
   def warn(msg)
